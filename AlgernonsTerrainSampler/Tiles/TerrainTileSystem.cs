@@ -49,6 +49,7 @@ public sealed class TerrainTileSystem : ModSystem
     private double lastCpuMilliseconds;
     private double cpuPercent;
     private long lastStatsLog;
+    private bool tickFailed;
 
     private ICoreClientAPI? capi;
     private IClientNetworkChannel? clientChannel;
@@ -138,7 +139,24 @@ public sealed class TerrainTileSystem : ModSystem
         this.serverTickListener = api.Event.RegisterGameTickListener(this.OnServerTick, 50);
     }
 
+    // The tile service is an extra: nothing in it may stop the server from starting.
     private void StartService()
+    {
+        try
+        {
+            this.TryStartService();
+        }
+        catch (Exception ex)
+        {
+            this.service?.Dispose();
+            this.service = null;
+            this.requests = null;
+            this.SetUnavailable($"The terrain tile service failed to start: {ex.GetBaseException().Message}");
+            this.sapi!.Logger.Error("{0}", LogPrefix + "the terrain tile service failed to start; the server runs on without it: " + ex);
+        }
+    }
+
+    private void TryStartService()
     {
         ICoreServerAPI api = this.sapi!;
         TerrainSamplerMod? mod = TerrainSamplerMod.Instance;
@@ -347,15 +365,26 @@ public sealed class TerrainTileSystem : ModSystem
             this.lastCpuSample = now;
         }
 
-        this.service.UpdateLoad(this.cpuPercent, interval);
-        this.service.Tick();
         TerrainTileService current = this.service;
-        this.sender!.Tick(this.config.TransferKilobytesPerTick * 1024, now, uid => current.WantedBy(uid), current.Running, current.Waiting);
+        try
+        {
+            current.UpdateLoad(this.cpuPercent, interval);
+            current.Tick();
+            this.sender!.Tick(this.config.TransferKilobytesPerTick * 1024, now, uid => current.WantedBy(uid), current.Running, current.Waiting);
 
-        while (this.localDecoded.TryDequeue(out TerrainTile? tile))
-            this.requests?.Complete(tile);
+            while (this.localDecoded.TryDequeue(out TerrainTile? tile))
+                this.requests?.Complete(tile);
+        }
+        catch (Exception ex)
+        {
+            // Logged once, not twenty times a second; the next tick tries again.
+            if (!this.tickFailed)
+                this.sapi!.Logger.Error("{0}", LogPrefix + "the terrain tile service's tick failed: " + ex);
 
-        if (this.config.LogTileStats && now - this.lastStatsLog >= 60000 && (current.Running > 0 || current.Waiting > 0 || this.sender.Clients > 0))
+            this.tickFailed = true;
+        }
+
+        if (this.config.LogTileStats && now - this.lastStatsLog >= 60000 && (current.Running > 0 || current.Waiting > 0 || this.sender!.Clients > 0))
         {
             this.lastStatsLog = now;
             this.Log($"tile stats: {this.Describe().Replace('\n', ' ')}");
@@ -402,6 +431,21 @@ public sealed class TerrainTileSystem : ModSystem
     }
 
     private void OnClientTick(float dt)
+    {
+        try
+        {
+            this.ClientTick();
+        }
+        catch (Exception ex)
+        {
+            if (!this.tickFailed)
+                this.capi!.Logger.Error("{0}", LogPrefix + "the terrain tile client's tick failed: " + ex);
+
+            this.tickFailed = true;
+        }
+    }
+
+    private void ClientTick()
     {
         this.RunDeferred();
         TerrainTileClientCore core = this.client!;

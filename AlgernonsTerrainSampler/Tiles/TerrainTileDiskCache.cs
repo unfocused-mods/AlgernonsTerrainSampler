@@ -48,7 +48,7 @@ internal sealed class TerrainTileDiskCache : IDisposable
         this.directory = Path.Combine(this.root, identity);
         this.limit = Math.Clamp(megabytes, 1, 65536) * 1024L * 1024L;
         this.log = log;
-        this.thread = new Thread(this.Run) { IsBackground = true, Name = "Terrain Sampler tile disk cache", Priority = ThreadPriority.BelowNormal };
+        this.thread = new Thread(this.Run) { IsBackground = true, Name = "Terrain Sampler tile disk cache" };
         this.thread.Start();
     }
 

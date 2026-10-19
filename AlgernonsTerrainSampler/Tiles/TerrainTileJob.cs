@@ -76,7 +76,16 @@ internal sealed class TerrainTileWorkers : IDisposable
         this.threads = new Thread[Math.Max(1, count)];
         for (int i = 0; i < this.threads.Length; i++)
         {
-            this.threads[i] = new Thread(this.Run) { IsBackground = true, Name = $"Terrain Sampler tiles {i + 1}", Priority = ThreadPriority.BelowNormal };
+            this.threads[i] = new Thread(this.Run) { IsBackground = true, Name = $"Terrain Sampler tiles {i + 1}" };
+            try
+            {
+                this.threads[i].Priority = ThreadPriority.BelowNormal;
+            }
+            catch (Exception ex) when (ex is PlatformNotSupportedException or ThreadStateException)
+            {
+                // Some platforms do not let a process lower a thread's priority; the throttle still applies.
+            }
+
             this.threads[i].Start();
         }
     }
