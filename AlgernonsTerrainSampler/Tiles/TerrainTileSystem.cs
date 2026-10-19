@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Common.Entities;
+using Vintagestory.API.Config;
 using Vintagestory.API.Server;
 
 namespace AlgernonsTerrainSampler.Tiles;
@@ -389,6 +390,66 @@ public sealed class TerrainTileSystem : ModSystem
             this.lastStatsLog = now;
             this.Log($"tile stats: {this.Describe().Replace('\n', ' ')}");
         }
+    }
+
+    /// <summary><c>/terrainsampler tilefetch [step] [radius]</c>: tiles round the caller, or spawn from the console, made as a server mod would ask for them.</summary>
+    internal TextCommandResult ServerFetch(TextCommandCallingArgs args)
+    {
+        ICoreServerAPI api = this.sapi!;
+        int step = (int)args[0];
+        int radius = Math.Clamp((int)args[1], 0, 16);
+        if (!TerrainTileKey.IsValidStep(step))
+            return TextCommandResult.Error("The step is a power of two from 1 to 64.");
+
+        if (!this.Available || this.service == null)
+            return TextCommandResult.Error($"Terrain tiles are unavailable: {this.UnavailableReason}");
+
+        EntityPos position = args.Caller.Player?.Entity?.Pos ?? api.World.DefaultSpawnPosition;
+        TerrainTileKey centre = TerrainTileKey.Containing(step, (int)position.X, (int)position.Z);
+        TerrainTileService current = this.service;
+        long madeBefore = current.Generated, bytesBefore = current.GeneratedBytes, diskBefore = current.DiskHits, memoryBefore = current.MemoryHits;
+        double sampleBefore = current.GenerateMilliseconds;
+        int total = ((2 * radius) + 1) * ((2 * radius) + 1);
+        int ready = 0, refused = 0;
+        string firstRefusal = "";
+        IServerPlayer? caller = args.Caller.Player as IServerPlayer;
+        Stopwatch timer = Stopwatch.StartNew();
+
+        void Report()
+        {
+            if (ready + refused < total)
+                return;
+
+            long made = current.Generated - madeBefore;
+            string message = string.Create(
+                CultureInfo.InvariantCulture,
+                $"Terrain tiles at step {step} round {centre.TileX}, {centre.TileZ}: {ready} of {total} in {timer.ElapsedMilliseconds} ms; {made} made ({(made > 0 ? (current.GenerateMilliseconds - sampleBefore) / made : 0):0} ms each to sample), {current.DiskHits - diskBefore} from disk, {current.MemoryHits - memoryBefore} from memory; {(made > 0 ? (current.GeneratedBytes - bytesBefore) / 1024.0 / made : 0):0.0} KiB a tile made{(refused > 0 ? $"; {refused} refused: {firstRefusal}" : "")}.");
+            this.Log(message);
+            caller?.SendMessage(GlobalConstants.GeneralChatGroup, message, EnumChatType.Notification);
+        }
+
+        for (int dz = -radius; dz <= radius; dz++)
+        {
+            for (int dx = -radius; dx <= radius; dx++)
+            {
+                TerrainTileKey key = new(step, centre.TileX + dx, centre.TileZ + dz);
+                _ = this.RequestTile(key.Step, key.TileX, key.TileZ, (dx * dx) + (dz * dz),
+                    tile =>
+                    {
+                        ready++;
+                        Report();
+                    },
+                    reason =>
+                    {
+                        refused++;
+                        if (firstRefusal.Length == 0)
+                            firstRefusal = reason;
+                        Report();
+                    });
+            }
+        }
+
+        return TextCommandResult.Success(string.Create(CultureInfo.InvariantCulture, $"Asked for {total} tile(s) at step {step} round {centre.TileX}, {centre.TileZ}; the server log says when they are done."));
     }
 
     /// <summary>The service's state, for <c>/terrainsampler tiles</c>.</summary>

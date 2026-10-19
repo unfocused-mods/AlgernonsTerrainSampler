@@ -96,6 +96,7 @@ internal sealed class TerrainTileService : IDisposable
     }
 
     public long Generated { get; private set; }
+    public long GeneratedBytes { get; private set; }
     public long MemoryHits { get; private set; }
     public long DiskHits { get; private set; }
     public long Failures { get; private set; }
@@ -271,6 +272,7 @@ internal sealed class TerrainTileService : IDisposable
         if (job.Error == null && job.Result != null)
         {
             this.Generated++;
+            this.GeneratedBytes += job.Result.Length;
             this.GenerateMilliseconds += job.SampleMilliseconds;
             this.Keep(entry, job.Result);
             this.Deliver(entry);
@@ -510,7 +512,7 @@ internal sealed class TerrainTileService : IDisposable
         StringBuilder text = new();
         _ = text.Append(CultureInfo.InvariantCulture, $"Tiles made {this.Generated}");
         if (this.Generated > 0)
-            _ = text.Append(CultureInfo.InvariantCulture, $" ({this.GenerateMilliseconds / this.Generated:0} ms each to sample)");
+            _ = text.Append(CultureInfo.InvariantCulture, $" ({this.GenerateMilliseconds / this.Generated:0} ms each to sample, {this.GeneratedBytes / 1024.0 / this.Generated:0.0} KiB each)");
 
         _ = text.Append(CultureInfo.InvariantCulture, $", from memory {this.MemoryHits}, from disk {this.DiskHits}, failed {this.Failures}, refused {this.Refusals}.\n");
         _ = text.Append(CultureInfo.InvariantCulture, $"Now: {this.running} being made on {this.workers.Count} worker(s), {this.Waiting} waiting, {this.Owners} owner(s) wanting tiles.\n");
