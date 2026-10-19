@@ -71,6 +71,11 @@ public class TerrainSamplerMod : ModSystem
                 .RequiresPrivilege(Privilege.chat)
                 .HandleWith(command.CmdSampleColumn)
             .EndSubCommand()
+            .BeginSubCommand("tiles")
+                .WithDescription("Show the terrain tile service's state: its cache, its queue and its clients")
+                .RequiresPrivilege(Privilege.controlserver)
+                .HandleWith(_ => TextCommandResult.Success(Tiles.TerrainTileSystem.ServerInstance?.Describe() ?? "The terrain tile service is not loaded."))
+            .EndSubCommand()
 #if DEBUG
             .BeginSubCommand("columninfo")
                 .WithDescription("Get debug information about the terrain generation that went into generating the block column at your current position")

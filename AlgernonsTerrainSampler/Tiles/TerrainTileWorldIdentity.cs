@@ -1,0 +1,91 @@
+#nullable enable
+using System;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using Vintagestory.API.Common;
+using Vintagestory.API.Datastructures;
+using Vintagestory.API.Server;
+using Vintagestory.ServerMods;
+
+namespace AlgernonsTerrainSampler.Tiles;
+
+/// <summary>Works out a world's tile cache identity from the game: everything <see cref="TerrainTileIdentity"/> promises.</summary>
+internal static class TerrainTileWorldIdentity
+{
+    public static string For(ICoreServerAPI api, TerrainSamplerMod mod, int cacheRevision, System.Func<int, int, TerrainColumnSample> sample)
+    {
+        string samplerVersion = api.ModLoader.GetMod("algernonsterrainsampler")?.Info?.Version ?? "unknown";
+        string watershedsVersion = mod.WatershedsLoaded ? api.ModLoader.GetMod("watersheds")?.Info?.Version ?? "unknown" : "";
+        byte[] landforms = api.Assets.TryGet(new AssetLocation("worldgen/landforms.json"))?.Data ?? [];
+
+        IWorldManagerAPI world = api.WorldManager;
+        (int X, int Z)[] canary = TerrainTileIdentity.CanaryColumns(world.MapSizeX / 2, world.MapSizeZ / 2, world.RegionSize, world.MapSizeX, world.MapSizeZ);
+
+        return TerrainTileIdentity.Hash(writer =>
+        {
+            writer.Write("algernonsterrainsampler-tiles");
+            writer.Write(TerrainTileIdentity.AlgorithmRevision);
+            writer.Write(TerrainTileCodec.FormatVersion);
+            writer.Write(samplerVersion);
+            writer.Write(api.World.SavegameIdentifier ?? "");
+            writer.Write(world.Seed);
+            writer.Write(world.MapSizeX);
+            writer.Write(world.MapSizeY);
+            writer.Write(world.MapSizeZ);
+            writer.Write(world.RegionSize);
+            writer.Write(api.World.SeaLevel);
+            WriteAttribute(writer, api.World.Config);
+            writer.Write(landforms.Length);
+            writer.Write(landforms);
+            WriteTerraGenConfig(writer);
+            writer.Write(mod.WatershedsLoaded);
+            writer.Write(mod.WatershedsDetailedSampling);
+            writer.Write(watershedsVersion);
+            writer.Write(cacheRevision);
+
+            // The canary: whatever else changed what the sampler answers, these change with it.
+            foreach ((int x, int z) in canary)
+                TerrainTileIdentity.WriteSample(writer, sample(x, z));
+        });
+    }
+
+    // The tree in key order, so the same configuration always hashes the same.
+    private static void WriteAttribute(BinaryWriter writer, IAttribute attribute)
+    {
+        if (attribute == null)
+        {
+            writer.Write(-1);
+            return;
+        }
+
+        writer.Write(attribute.GetAttributeId());
+        if (attribute is ITreeAttribute tree)
+        {
+            writer.Write(tree.Count);
+            foreach (System.Collections.Generic.KeyValuePair<string, IAttribute> item in tree.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+            {
+                writer.Write(item.Key);
+                WriteAttribute(writer, item.Value);
+            }
+        }
+        else
+        {
+            attribute.ToBytes(writer);
+        }
+    }
+
+    // Every public static setting of the game's terrain generation, which the sampler reads as the game does. A code mod
+    // that changes one changes the identity.
+    private static void WriteTerraGenConfig(BinaryWriter writer)
+    {
+        foreach (FieldInfo field in typeof(TerraGenConfig).GetFields(BindingFlags.Public | BindingFlags.Static)
+                     .Where(f => f.FieldType.IsPrimitive || f.FieldType == typeof(string))
+                     .OrderBy(f => f.Name, StringComparer.Ordinal))
+        {
+            writer.Write(field.Name);
+            writer.Write(Convert.ToString(field.GetValue(null), CultureInfo.InvariantCulture) ?? "");
+        }
+    }
+}
