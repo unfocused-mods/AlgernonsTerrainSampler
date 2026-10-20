@@ -122,7 +122,7 @@ which is on the same machine.
 | `NetworkSampling` | `true` | Whether clients may ask at all. Mods on the server always may |
 | `RequiredPrivilege` | `""` | The privilege a player needs. Empty lets everyone; `controlserver` only administrators |
 | `MaxWantedTiles` | 1,024 | Tiles one client may want at once |
-| `MaxDistancePerStep` | 4,096 | A tile at step *s* is only served within 4,096 x *s* blocks of the asking player (16 km at step 4), so nobody can ask for fine tiles across the whole world |
+| `MaxDistancePerStep` | 8,192 | A tile at step *s* is only served within 8,192 x *s* blocks of the asking player (16 km at step 2, 32 km at step 4), so nobody can ask for fine tiles across the whole world |
 | `Workers` | 0 | Sampling threads; 0 picks as above |
 | `DiskCacheMegabytes` | 1,024 | The server's disk cache; 0 turns it off |
 | `MemoryCacheMegabytes` | 64 | Encoded tiles kept in memory |

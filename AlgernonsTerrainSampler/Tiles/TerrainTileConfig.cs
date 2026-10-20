@@ -17,8 +17,8 @@ public sealed class TerrainTileConfig
     /// <summary>Tiles one client may want at once.</summary>
     public int MaxWantedTiles { get; set; } = 1024;
 
-    /// <summary>A tile at step s is only served within this many times s blocks of the asking player: 16 km at step 4.</summary>
-    public int MaxDistancePerStep { get; set; } = 4096;
+    /// <summary>A tile at step s is only served within this many times s blocks of the asking player: 16 km at step 2, 32 km at step 4.</summary>
+    public int MaxDistancePerStep { get; set; } = 8192;
 
     /// <summary>Sampling threads. 0 picks: one on a dedicated server, otherwise cores less four, from one to four.</summary>
     public int Workers { get; set; }
