@@ -6,7 +6,7 @@
     "Algernon"
   ],
   "description": "Provides terrain height and worldgen map-data sampling at any world coordinate without full chunk generation, and serves it to clients as cached tiles.",
-  "version": "1.4.0",
+  "version": "1.4.0-rc.1",
   "dependencies": {
     "game": "1.22.0"
   },
