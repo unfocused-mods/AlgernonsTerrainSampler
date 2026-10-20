@@ -179,10 +179,10 @@ variance allows it), reading the tile's public fields through cached `FieldInfo`
 
 ## Compatibility
 
-- `requiredOnClient` and `requiredOnServer` are both false. A player can keep the sampler installed and join a server
-  without it (the tile service reports itself unavailable there), and a server with it no longer makes every player
-  install it. The client and server need the same version for tiles: the game turns off a client's copy that differs
-  from the server's.
+- `requiredOnClient` and `requiredOnServer` are both true, as in 1.3.0, so nothing about installing it changes. A
+  server with it has every player who joins install the same version, which mods that depend on it on clients rely on,
+  and so every player on a server with 1.4.0 can take tiles. A player's copy is turned off on a server without it, and
+  so is a copy whose version differs from the server's.
 - A client and server on different protocol versions say so in the status, and do nothing.
 - `SampleColumn` and `GetBlockColumnHeight` are unchanged.
 - Landforms are now loaded at every world start, not once per process: they depend on the world height and on mods
