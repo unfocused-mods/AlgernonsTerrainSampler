@@ -56,8 +56,7 @@ public sealed class TerrainTileSystem : ModSystem
     private IClientNetworkChannel? clientChannel;
     private TerrainTileClientCore? client;
     private long clientTickListener;
-    private long lastHello = long.MinValue;
-    private bool wasConnected;
+    private readonly System.Collections.Generic.HashSet<string> greeted = new(StringComparer.Ordinal);
 
     /// <summary>The server's tile service, once the server has started; null on a client and before then.</summary>
     public static TerrainTileSystem? ServerInstance { get; private set; }
@@ -307,6 +306,10 @@ public sealed class TerrainTileSystem : ModSystem
             reason = info.DeniedReason;
         }
 
+        // Once a connection: whether a player's client found the service, and what it was told.
+        if (this.greeted.Add(player.PlayerUID))
+            this.Log(available ? $"{player.PlayerName} asked for terrain tiles: serving them." : $"{player.PlayerName} asked for terrain tiles: not serving them: {reason}");
+
         this.serverChannel!.SendPacket(new TerrainTileStatus
         {
             Available = available,
@@ -333,6 +336,7 @@ public sealed class TerrainTileSystem : ModSystem
 
     private void OnPlayerDisconnect(IServerPlayer player)
     {
+        _ = this.greeted.Remove(player.PlayerUID);
         this.service?.DropOwner(player.PlayerUID);
         this.sender?.Remove(player.PlayerUID);
     }
@@ -470,8 +474,13 @@ public sealed class TerrainTileSystem : ModSystem
         this.capi = api;
         ClientInstance = this;
         this.config = LoadConfig(api, store: false);
-        this.client = new TerrainTileClientCore(want => this.clientChannel?.SendPacket(want), this.OpenClientDisk, this.Log);
-        this.client.AvailabilityChanged += this.SyncClient;
+        this.client = new TerrainTileClientCore(
+            want => this.clientChannel?.SendPacket(want),
+            this.OpenClientDisk,
+            this.Log,
+            () => this.clientChannel?.SendPacket(new TerrainTileHello()));
+        this.client.AvailabilityChanged += this.OnClientAvailabilityChanged;
+        this.client.StatusReceived += this.OnClientStatus;
         this.requests = this.client.Requests;
         this.UnavailableReason = this.client.UnavailableReason;
 
@@ -509,42 +518,32 @@ public sealed class TerrainTileSystem : ModSystem
     private void ClientTick()
     {
         this.RunDeferred();
-        TerrainTileClientCore core = this.client!;
-        if (!this.clientChannel!.Connected)
-        {
-            if (this.wasConnected)
-                core.OnDisconnected("Disconnected from the server.");
-
-            this.wasConnected = false;
-            if (!core.Available)
-            {
-                core.SetWaitingReason("This server does not serve terrain tiles: it does not run Algernon's Terrain Sampler 1.4.0 or later.");
-                this.UnavailableReason = core.UnavailableReason;
-            }
-
-            core.Tick();
-            return;
-        }
-
-        this.wasConnected = true;
-        long now = Environment.TickCount64;
-        if (core.Status == null && now - this.lastHello >= 5000)
-        {
-            this.lastHello = now;
-            this.clientChannel.SendPacket(new TerrainTileHello());
-        }
-
-        core.Tick();
+        this.client!.Tick(this.clientChannel!.Connected, Environment.TickCount64);
+        this.MirrorClient();
     }
 
-    private void SyncClient()
+    // The core is the truth on a client; these properties show it, whether or not availability changed.
+    private void MirrorClient()
     {
         TerrainTileClientCore core = this.client!;
         this.Available = core.Available;
         this.UnavailableReason = core.UnavailableReason;
         this.Identity = core.Identity;
-        this.capi?.Logger.Notification("{0}", LogPrefix + (core.Available ? $"the server serves terrain tiles, identity {core.Identity[..12]}." : $"terrain tiles unavailable: {core.UnavailableReason}"));
+    }
+
+    private void OnClientAvailabilityChanged()
+    {
+        this.MirrorClient();
         this.RaiseAvailabilityChanged();
+    }
+
+    private void OnClientStatus()
+    {
+        TerrainTileClientCore core = this.client!;
+        this.MirrorClient();
+        this.capi?.Logger.Notification("{0}", LogPrefix + (core.Available
+            ? $"the server serves terrain tiles, identity {core.Identity[..12]}."
+            : $"the server does not serve terrain tiles: {core.UnavailableReason}"));
     }
 
     private TerrainTileDiskCache? OpenClientDisk(string identity)

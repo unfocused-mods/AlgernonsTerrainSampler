@@ -139,6 +139,7 @@ public class TileNetworkTests
         public readonly List<TerrainTile> Tiles = [];
         public readonly List<string> Refusals = [];
         public int WantsSent;
+        public int Hellos;
 
         public Client(string? diskRoot)
         {
@@ -148,7 +149,8 @@ public class TileNetworkTests
                     this.WantsSent++;
                     this.ToServer.Enqueue(Wire(want));
                 },
-                identity => diskRoot == null ? null : new TerrainTileDiskCache(diskRoot, identity, 64));
+                identity => diskRoot == null ? null : new TerrainTileDiskCache(diskRoot, identity, 64),
+                sendHello: () => this.Hellos++);
         }
 
         public void Ask(TerrainTileKey key, int priority = 0) => _ = this.Core.Requests.Request(key, priority, this.Tiles.Add, this.Refusals.Add);
@@ -333,6 +335,71 @@ public class TileNetworkTests
         client.Core.Tick();
         Assert.Equal(["No sampler here."], client.Refusals);
         Assert.False(answeredInside);
+    }
+
+    [Theory]
+    [InlineData(0L)]
+    [InlineData(123456789L)]
+    [InlineData(long.MaxValue - 100000)]
+    public void A_connected_client_says_hello_at_once_and_again_until_answered(long start)
+    {
+        using Server server = new();
+        using Client client = new(null);
+        client.Core.Tick(connected: true, start);
+        Assert.Equal(1, client.Hellos);
+
+        client.Core.Tick(connected: true, start + 4999);
+        Assert.Equal(1, client.Hellos);
+        client.Core.Tick(connected: true, start + 5000);
+        Assert.Equal(2, client.Hellos);
+
+        client.Core.OnStatus(server.Status);
+        client.Core.Tick(connected: true, start + 20000);
+        Assert.Equal(2, client.Hellos);
+        Assert.True(client.Core.Available);
+    }
+
+    [Fact]
+    public void A_client_whose_channel_never_connects_says_why_after_a_while()
+    {
+        using Client client = new(null);
+        client.Core.Tick(connected: false, 1000);
+        Assert.Equal("Waiting for the server.", client.Core.UnavailableReason);
+
+        client.Core.Tick(connected: false, 11000);
+        Assert.Contains("does not run Algernon's Terrain Sampler", client.Core.UnavailableReason);
+        Assert.Equal(0, client.Hellos);
+    }
+
+    [Fact]
+    public void A_client_that_loses_its_channel_refuses_what_it_waited_for_and_greets_the_next_one()
+    {
+        using Server server = new();
+        using Client client = new(null);
+        client.Core.Tick(connected: true, 0);
+        client.Core.OnStatus(server.Status);
+        client.Ask(Square(4, 0)[0]);
+        client.Core.Tick(connected: true, 50);
+
+        client.Core.Tick(connected: false, 100);
+        Assert.False(client.Core.Available);
+        Assert.Equal(["Disconnected from the server."], client.Refusals);
+
+        client.Core.Tick(connected: true, 150);
+        Assert.Equal(2, client.Hellos);
+    }
+
+    [Fact]
+    public void A_server_that_says_no_is_heard_and_its_reason_kept()
+    {
+        using Client client = new(null);
+        client.Core.Tick(connected: true, 0);
+        client.Core.OnStatus(Wire(new TerrainTileStatus { Available = false, Reason = "Not for you." }));
+        Assert.False(client.Core.Available);
+        Assert.Equal("Not for you.", client.Core.UnavailableReason);
+
+        client.Core.Tick(connected: true, 60000);
+        Assert.Equal(1, client.Hellos);
     }
 
     [Fact]

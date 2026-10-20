@@ -19,8 +19,12 @@ namespace AlgernonsTerrainSampler.Tiles;
 internal sealed class TerrainTileClientCore : ITerrainTileSource, IDisposable
 {
     private const long RecentLimit = 32L * 1024 * 1024;
+    private const long HelloMilliseconds = 5000;
+    private const long NoServerMilliseconds = 10000;
+    private const string NoServerReason = "This server does not serve terrain tiles: it does not run Algernon's Terrain Sampler 1.4.0 or later.";
 
     private readonly Action<TerrainTileWant> send;
+    private readonly Action? sendHello;
     private readonly Func<string, TerrainTileDiskCache?> openDisk;
     private readonly Action<string>? log;
     private readonly Dictionary<TerrainTileKey, Pending> pending = [];
@@ -34,15 +38,22 @@ internal sealed class TerrainTileClientCore : ITerrainTileSource, IDisposable
     private TerrainTileDiskCache? disk;
     private long recentBytes;
     private long serial;
+    private long firstTick = -1;
+    private long nextHello;
+    private bool wasConnected;
     private bool disposed;
 
-    public TerrainTileClientCore(Action<TerrainTileWant> send, Func<string, TerrainTileDiskCache?> openDisk, Action<string>? log = null)
+    public TerrainTileClientCore(Action<TerrainTileWant> send, Func<string, TerrainTileDiskCache?> openDisk, Action<string>? log = null, Action? sendHello = null)
     {
         this.send = send;
+        this.sendHello = sendHello;
         this.openDisk = openDisk;
         this.log = log;
         this.Requests = new TerrainTileRequests(this, log);
     }
+
+    /// <summary>Raised on the main thread whenever the server answers a hello, whatever it says.</summary>
+    public event Action? StatusReceived;
 
     public TerrainTileRequests Requests { get; }
 
@@ -146,6 +157,7 @@ internal sealed class TerrainTileClientCore : ITerrainTileSource, IDisposable
 
         this.Identity = available ? status.Identity : "";
         this.SetAvailable(available, reason);
+        this.StatusReceived?.Invoke();
     }
 
     public void OnDisconnected(string reason) => this.SetAvailable(false, reason);
@@ -216,6 +228,40 @@ internal sealed class TerrainTileClientCore : ITerrainTileSource, IDisposable
     }
 
     public void OnProgress(TerrainTileProgress progress) => this.LastProgress = progress;
+
+    /// <summary>
+    /// A tick with the channel's state: says hello as soon as the channel connects, and again every five seconds until
+    /// the server answers; says why when the channel never connects; refuses everything when it drops.
+    /// </summary>
+    public void Tick(bool connected, long now)
+    {
+        if (this.firstTick < 0)
+            this.firstTick = now;
+
+        if (connected)
+        {
+            this.wasConnected = true;
+            if (this.Status == null && now >= this.nextHello)
+            {
+                this.nextHello = now + HelloMilliseconds;
+                this.sendHello?.Invoke();
+            }
+        }
+        else if (this.wasConnected)
+        {
+            this.wasConnected = false;
+            this.Status = null;
+            this.nextHello = 0;
+            this.OnDisconnected("Disconnected from the server.");
+        }
+        else if (!this.Available && now - this.firstTick >= NoServerMilliseconds)
+        {
+            // A server with the sampler connects its channel while the world loads, so this long without it means none.
+            this.SetWaitingReason(NoServerReason);
+        }
+
+        this.Tick();
+    }
 
     public void Tick()
     {
